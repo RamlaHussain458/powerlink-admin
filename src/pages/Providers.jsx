@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { db } from "../lib/firebase";
 import {
   collection,
+  collectionGroup,
   getDocs,
   doc,
   updateDoc,
@@ -95,10 +96,11 @@ export default function Providers() {
     setEquipModal(provider);
     setEquipLoading(true);
     setEquipment([]);
+    const providerId = provider.uid ?? provider.id;
     const snap = await getDocs(
       query(
-        collection(db, "equipment"),
-        where("providerId", "==", provider.uid ?? provider.id),
+        collectionGroup(db, "equipment"),
+        where("providerId", "==", providerId),
       ),
     );
     setEquipment(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -117,7 +119,6 @@ export default function Providers() {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      {/* Toolbar */}
       <div className="card p-4 flex flex-wrap gap-3 items-center">
         <SearchInput
           value={search}
@@ -140,7 +141,6 @@ export default function Providers() {
         </span>
       </div>
 
-      {/* Table */}
       <div className="card overflow-hidden">
         <Table>
           <thead>
@@ -254,7 +254,6 @@ export default function Providers() {
         </Table>
       </div>
 
-      {/* View Provider Modal */}
       <Modal
         open={!!viewModal}
         onClose={() => setViewModal(null)}
@@ -301,7 +300,6 @@ export default function Providers() {
         )}
       </Modal>
 
-      {/* Equipment Modal */}
       <Modal
         open={!!equipModal}
         onClose={() => setEquipModal(null)}
@@ -355,7 +353,6 @@ export default function Providers() {
         )}
       </Modal>
 
-      {/* Confirm */}
       <Confirm
         open={!!confirm}
         onClose={() => setConfirm(null)}

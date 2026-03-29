@@ -155,7 +155,7 @@ export default function Users() {
                         onClick={() => openBookings(u)}
                         className="btn-ghost text-xs px-2 py-1"
                       >
-                        Bookings
+                        View
                       </button>
                       {u.role !== "admin" && (
                         <button
