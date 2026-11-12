@@ -1,15 +1,16 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
+import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
+  const { user, role, loading: authLoading } = useAuth();
 
   const handle = async (e) => {
     e.preventDefault();
@@ -23,10 +24,13 @@ export default function Login() {
         setError("Access denied — this account is not an administrator.");
         return;
       }
-      navigate("/dashboard");
+      // No manual navigate: once AuthContext has loaded the role, the redirect
+      // below sends the admin to the dashboard.
     } catch (err) {
       setError(
-        err.code === "auth/invalid-credential"
+        err.code === "auth/invalid-credential" ||
+          err.code === "auth/wrong-password" ||
+          err.code === "auth/user-not-found"
           ? "Invalid email or password."
           : err.message,
       );
@@ -34,6 +38,11 @@ export default function Login() {
       setLoading(false);
     }
   };
+
+  // Already signed in as admin (e.g. just logged in): go straight to the dashboard
+  if (!authLoading && user && role === "admin") {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <div

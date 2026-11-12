@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { db } from "../lib/firebase";
+import { db, storage, functions } from "../lib/firebase";
+import { httpsCallable } from "firebase/functions";
+import { ref as storageRef, getDownloadURL } from "firebase/storage";
 import {
   collection,
   collectionGroup,
@@ -8,7 +10,6 @@ import {
   updateDoc,
   query,
   where,
-  orderBy,
 } from "firebase/firestore";
 import { useToast } from "../context/ToastContext";
 import {
@@ -36,14 +37,27 @@ export default function Providers() {
   const [equipLoading, setEquipLoading] = useState(false);
   const [confirm, setConfirm] = useState(null); // { type, provider }
 
+  const [docsModal, setDocsModal] = useState(null); // provider obj
+  const [docs, setDocs] = useState([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+
   const toast = useToast();
 
   const load = async () => {
     setLoading(true);
-    const snap = await getDocs(
-      query(collection(db, "providers"), orderBy("createdAt", "desc")),
-    );
-    setProviders(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    try {
+      // No orderBy: it would hide providers without a createdAt field.
+      const snap = await getDocs(collection(db, "providers"));
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      list.sort(
+        (a, b) =>
+          (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0),
+      );
+      setProviders(list);
+    } catch (err) {
+      console.error("Failed to load providers:", err);
+      toast.add("Could not load providers", "error");
+    }
     setLoading(false);
   };
 
@@ -67,9 +81,15 @@ export default function Providers() {
   }, [providers, search, status]);
 
   const updateStatus = async (provider, newStatus) => {
-    await updateDoc(doc(db, "providers", provider.uid ?? provider.id), {
-      status: newStatus,
-    });
+    try {
+      await updateDoc(doc(db, "providers", provider.uid ?? provider.id), {
+        status: newStatus,
+      });
+    } catch (err) {
+      console.error(err);
+      toast.add(`Could not update ${provider.businessName}`, "error");
+      return;
+    }
     setProviders((ps) =>
       ps.map((p) =>
         p.id === (provider.uid ?? provider.id)
@@ -81,6 +101,19 @@ export default function Providers() {
       `${provider.businessName} ${newStatus === "approved" ? "approved ✓" : "suspended"}`,
       newStatus === "approved" ? "success" : "error",
     );
+  };
+
+  // Removes the provider's login (Firebase Auth) + profile, equipment and documents
+  const deleteProvider = async (provider) => {
+    const id = provider.uid ?? provider.id;
+    try {
+      await httpsCallable(functions, "adminDeleteAccount")({ uid: id });
+      setProviders((ps) => ps.filter((p) => p.id !== id));
+      toast.add(`${provider.businessName} deleted`, "error");
+    } catch (err) {
+      console.error(err);
+      toast.add(`Delete failed: ${err.message}`, "error");
+    }
   };
 
   const bulkApprove = async () => {
@@ -105,6 +138,46 @@ export default function Providers() {
     );
     setEquipment(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     setEquipLoading(false);
+  };
+
+  const openDocs = async (provider) => {
+    setDocsModal(provider);
+    setDocsLoading(true);
+    setDocs([]);
+    try {
+      const providerId = provider.uid ?? provider.id;
+      const snap = await getDocs(
+        collection(db, "providers", providerId, "documents"),
+      );
+      const items = await Promise.all(
+        snap.docs.map(async (d) => {
+          const data = d.data();
+          let url = null;
+          try {
+            url = await getDownloadURL(storageRef(storage, data.storagePath));
+          } catch (err) {
+            console.error("Could not load document URL:", err);
+          }
+          return { id: d.id, ...data, url };
+        }),
+      );
+      items.sort(
+        (a, b) =>
+          (a.uploadedAt?.toMillis?.() ?? 0) - (b.uploadedAt?.toMillis?.() ?? 0),
+      );
+      setDocs(items);
+    } catch (err) {
+      console.error("Failed to load documents:", err);
+      toast.add("Could not load documents", "error");
+    }
+    setDocsLoading(false);
+  };
+
+  const fmtSize = (bytes) => {
+    if (!bytes || bytes < 0) return "";
+    return bytes > 1024 * 1024
+      ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   };
 
   const toggleSelect = (id) => {
@@ -172,6 +245,7 @@ export default function Providers() {
               <th className="th">Email</th>
               <th className="th">Phone</th>
               <th className="th">Location</th>
+              <th className="th">Docs</th>
               <th className="th">Status</th>
               <th className="th">Registered</th>
               <th className="th">Actions</th>
@@ -179,7 +253,7 @@ export default function Providers() {
           </thead>
           <tbody className="divide-y divide-surface-border">
             {loading ? (
-              <SkeletonRows cols={9} rows={8} />
+              <SkeletonRows cols={10} rows={8} />
             ) : filtered.length === 0 ? (
               <Empty message="No providers found" />
             ) : (
@@ -212,6 +286,18 @@ export default function Providers() {
                     {p.address ?? p.location ?? "—"}
                   </td>
                   <td className="td">
+                    {p.documentCount > 0 ? (
+                      <button
+                        onClick={() => openDocs(p)}
+                        className="text-xs px-2 py-1 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
+                      >
+                        {p.documentCount} file{p.documentCount === 1 ? "" : "s"}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-500">None</span>
+                    )}
+                  </td>
+                  <td className="td">
                     <StatusBadge status={p.status} />
                   </td>
                   <td className="td text-slate-500 text-xs">
@@ -219,6 +305,12 @@ export default function Providers() {
                   </td>
                   <td className="td">
                     <div className="flex gap-1.5 items-center">
+                      <button
+                        onClick={() => openDocs(p)}
+                        className="btn-ghost text-xs px-2 py-1"
+                      >
+                        Documents
+                      </button>
                       <button
                         onClick={() => openEquip(p)}
                         className="btn-ghost text-xs px-2 py-1"
@@ -235,6 +327,12 @@ export default function Providers() {
                           Approve
                         </button>
                       )}
+                      <button
+                        onClick={() => setConfirm({ type: "delete", provider: p })}
+                        className="text-xs px-2 py-1 rounded-lg bg-slate-500/10 text-slate-400 border border-slate-500/20 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                      >
+                        Delete
+                      </button>
                       {p.status !== "suspended" && (
                         <button
                           onClick={() =>
@@ -270,6 +368,12 @@ export default function Providers() {
                 ["Address", viewModal.address ?? viewModal.location],
                 ["Status", viewModal.status],
                 [
+                  "Documents",
+                  viewModal.documentCount > 0
+                    ? `${viewModal.documentCount} submitted`
+                    : "None submitted",
+                ],
+                [
                   "Rating",
                   viewModal.rating
                     ? `${viewModal.rating.toFixed(1)} (${viewModal.totalRatings} reviews)`
@@ -296,6 +400,83 @@ export default function Providers() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={!!docsModal}
+        onClose={() => setDocsModal(null)}
+        title={`${docsModal?.businessName ?? ""} - Verification Documents`}
+      >
+        {docsLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="skeleton h-12 rounded-xl" />
+            ))}
+          </div>
+        ) : docs.length === 0 ? (
+          <p className="text-slate-500 text-sm text-center py-8">
+            This provider has not submitted any documents.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {docs.map((d) => (
+              <div
+                key={d.id}
+                className="flex items-center gap-4 p-3 rounded-xl bg-surface-hover border border-surface-border"
+              >
+                {d.contentType?.startsWith("image/") && d.url ? (
+                  <a href={d.url} target="_blank" rel="noreferrer">
+                    <img
+                      src={d.url}
+                      className="w-12 h-12 rounded-lg object-cover bg-surface-border"
+                    />
+                  </a>
+                ) : (
+                  <div className="w-12 h-12 rounded-lg bg-surface-border flex items-center justify-center text-slate-400 text-xs font-bold">
+                    {d.contentType === "application/pdf" ? "PDF" : "FILE"}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-white truncate">
+                    {d.name}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {fmtSize(d.size)}
+                    {d.uploadedAt?.toDate
+                      ? ` · ${d.uploadedAt.toDate().toLocaleDateString()}`
+                      : ""}
+                  </div>
+                </div>
+                {d.url ? (
+                  <a
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost text-xs px-3 py-1"
+                  >
+                    Open
+                  </a>
+                ) : (
+                  <span className="text-xs text-red-400">Unavailable</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {docsModal && docsModal.status !== "approved" && (
+          <div className="flex gap-2 justify-end pt-4">
+            <button
+              onClick={() => {
+                const p = docsModal;
+                setDocsModal(null);
+                setConfirm({ type: "approve", provider: p });
+              }}
+              className="text-xs px-3 py-1.5 rounded-lg bg-green-500/10 text-green-400 border border-green-500/20 hover:bg-green-500/20 transition-colors"
+            >
+              Approve
+            </button>
           </div>
         )}
       </Modal>
@@ -357,16 +538,30 @@ export default function Providers() {
         open={!!confirm}
         onClose={() => setConfirm(null)}
         onConfirm={() =>
-          updateStatus(
-            confirm.provider,
-            confirm.type === "approve" ? "approved" : "suspended",
-          )
+          confirm.type === "delete"
+            ? deleteProvider(confirm.provider)
+            : updateStatus(
+                confirm.provider,
+                confirm.type === "approve" ? "approved" : "suspended",
+              )
         }
         title={
-          confirm?.type === "approve" ? "Approve Provider" : "Suspend Provider"
+          confirm?.type === "approve"
+            ? "Approve Provider"
+            : confirm?.type === "delete"
+              ? "Delete Provider"
+              : "Suspend Provider"
         }
-        message={`Are you sure you want to ${confirm?.type} "${confirm?.provider?.businessName}"?`}
-        danger={confirm?.type === "suspend"}
+        message={`Are you sure you want to ${confirm?.type} "${confirm?.provider?.businessName}"?${
+          confirm?.type === "delete"
+            ? " This removes their login, equipment and documents permanently."
+            : ""
+        }${
+          confirm?.type === "approve" && !(confirm?.provider?.documentCount > 0)
+            ? " Note: this provider has not submitted any verification documents."
+            : ""
+        }`}
+        danger={confirm?.type === "suspend" || confirm?.type === "delete"}
       />
     </div>
   );

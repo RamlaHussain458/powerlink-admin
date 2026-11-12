@@ -31,6 +31,9 @@ export default function Dashboard() {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     const ts = Timestamp.fromDate(start);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
 
     Promise.all([
       getDocs(collection(db, "users")),
@@ -42,11 +45,18 @@ export default function Dashboard() {
       getDocs(
         query(
           collection(db, "bookings"),
+          where("createdAt", ">=", Timestamp.fromDate(thirtyDaysAgo)),
+        ),
+      ),
+      getDocs(
+        query(
+          collection(db, "bookings"),
           orderBy("createdAt", "desc"),
           limit(5),
         ),
       ),
-    ]).then(([users, providers, pending, monthBook, recentBook]) => {
+    ])
+      .then(([users, providers, pending, monthBook, last30Book, recentBook]) => {
       // Revenue this month
       let revenue = 0;
       monthBook.forEach((d) => {
@@ -54,15 +64,13 @@ export default function Dashboard() {
       });
 
       // Bookings per day last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       const dayMap = {};
       for (let i = 29; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
         dayMap[d.toISOString().slice(0, 10)] = 0;
       }
-      monthBook.forEach((d) => {
+      last30Book.forEach((d) => {
         const date = d.data().createdAt?.toDate().toISOString().slice(0, 10);
         if (date && dayMap[date] !== undefined) dayMap[date]++;
       });
@@ -80,8 +88,12 @@ export default function Dashboard() {
       });
       setChart(chartData);
       setRecent(recentBook.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
+    })
+      .catch((err) => {
+        console.error("Failed to load dashboard:", err);
+        setStats({ users: 0, providers: 0, pending: 0, bookings: 0, revenue: 0 });
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const fmt = (n) =>

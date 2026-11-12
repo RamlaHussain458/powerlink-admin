@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { db } from "../lib/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, collectionGroup, getDocs } from "firebase/firestore";
 import {
   BarChart,
   Bar,
@@ -47,13 +47,15 @@ export default function Analytics() {
     Promise.all([
       getDocs(collection(db, "bookings")),
       getDocs(collection(db, "providers")),
-      getDocs(collection(db, "equipment")),
-    ]).then(([b, p, e]) => {
-      setBookings(b.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setProviders(p.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setEquipment(e.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
+      getDocs(collectionGroup(db, "equipment")), // equipment lives under providers/{id}/equipment
+    ])
+      .then(([b, p, e]) => {
+        setBookings(b.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setProviders(p.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setEquipment(e.docs.map((d) => ({ id: d.id, ...d.data() })));
+      })
+      .catch((err) => console.error("Failed to load analytics:", err))
+      .finally(() => setLoading(false));
   }, []);
 
   const revenueByMonth = useMemo(() => {

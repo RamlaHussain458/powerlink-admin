@@ -1,13 +1,12 @@
 import { useEffect, useState, useMemo } from "react";
 import { db } from "../lib/firebase";
 import {
+  collection,
   collectionGroup,
   getDocs,
   doc,
   updateDoc,
   deleteDoc,
-  orderBy,
-  query,
 } from "firebase/firestore";
 import { useToast } from "../context/ToastContext";
 import {
@@ -28,15 +27,37 @@ export default function Equipment() {
   const toast = useToast();
 
   useEffect(() => {
-    getDocs(
-      query(collectionGroup(db, "equipment"), orderBy("createdAt", "desc")),
-    )
-      .then((snap) => {
-        setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    // The app saves equipment as providers/{id}/equipment/{id}, with the kind of
+    // equipment in "type" (older/admin data may use "category"). No orderBy so
+    // items without createdAt are not hidden and no extra index is needed.
+    Promise.all([
+      getDocs(collectionGroup(db, "equipment")),
+      getDocs(collection(db, "providers")),
+    ])
+      .then(([eqSnap, provSnap]) => {
+        const names = {};
+        provSnap.forEach((p) => {
+          names[p.id] = p.data().businessName ?? p.data().name;
+        });
+        const list = eqSnap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ...data,
+            category: data.type ?? data.category,
+            providerName: data.providerName ?? names[data.providerId],
+          };
+        });
+        list.sort(
+          (a, b) =>
+            (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0),
+        );
+        setItems(list);
         setLoading(false);
       })
       .catch((err) => {
         console.error("Failed to load equipment:", err);
+        toast.add("Could not load equipment", "error");
         setLoading(false);
       });
   }, []);

@@ -1,7 +1,12 @@
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import {
+  getAuth,
+  setPersistence,
+  browserSessionPersistence,
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { getFunctions } from "firebase/functions";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_API_KEY,
@@ -15,5 +20,12 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+// Session persistence: the admin is signed out when the tab/browser is closed
+// (the default "local" persistence keeps you signed in forever).
+setPersistence(auth, browserSessionPersistence).catch((err) =>
+  console.error("Could not set auth persistence:", err),
+);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+// Cloud Functions (region must match where the functions are deployed; default us-central1)
+export const functions = getFunctions(app);

@@ -25,10 +25,12 @@ export default function Bookings() {
   useEffect(() => {
     getDocs(
       query(collection(db, "bookings"), orderBy("createdAt", "desc")),
-    ).then((snap) => {
-      setBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
+    )
+      .then((snap) => {
+        setBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      })
+      .catch((err) => console.error("Failed to load bookings:", err))
+      .finally(() => setLoading(false));
   }, []);
 
   const providers = useMemo(() => {
